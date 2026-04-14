@@ -16,4 +16,7 @@ local.properties
 /Home/
 /Assets/
 /app/stitch/
+/ffmpegcheck/
+screenshot.png
+test_sticker.webp
 *.hprof
