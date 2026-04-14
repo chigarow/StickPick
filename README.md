@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="Assets/icon.png" width="96" height="96" alt="StickPick" style="border-radius: 20px;" />
+<img src="Assets/logo.png" width="200" height="200" alt="StickPick" style="border-radius: 20px;" />
 
 # StickPick
 
