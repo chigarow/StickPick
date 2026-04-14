@@ -18,15 +18,11 @@ Fetch any Telegram sticker pack, convert animated & static stickers, and export 
 
 </div>
 
----
-
 ## [+] How It Works
 
 > Paste a Telegram sticker pack link → Download → Preview → Convert → Add to WhatsApp
 
 The app fetches sticker metadata via the Telegram Bot API, downloads all stickers, converts `.webm` video stickers to animated WebP using FFmpeg, and serves them to WhatsApp through a ContentProvider following the [official WhatsApp Sticker API](https://github.com/WhatsApp/stickers).
-
----
 
 ## [+] Features
 
@@ -37,8 +33,6 @@ The app fetches sticker metadata via the Telegram Bot API, downloads all sticker
 - **Dark Mode** : light, dark, and system-default themes
 - **Transparent Padding** : non-square stickers keep transparency, no black bars
 - **Configurable** : pack size limit, author name, bot token — all from settings
-
----
 
 ## [+] Setup
 
@@ -85,8 +79,6 @@ Both can be changed later in Settings.
 
 </details>
 
----
-
 ## [+] Building the APK
 
 ```bash
@@ -101,35 +93,11 @@ Output: `app/build/outputs/apk/release/app-release.apk`
 
 > APK size is ~87MB due to FFmpeg native libraries. An AAB for Play Store would be ~45MB per device via ABI splitting.
 
----
-
-## [+] WhatsApp Integration
-
-The app implements a `ContentProvider` following the [official WhatsApp third-party sticker API](https://github.com/WhatsApp/stickers). WhatsApp queries the provider for pack metadata, sticker lists, and image files.
-
-<details>
-<summary><strong>Pack validation rules</strong></summary>
-
-<br/>
-
-| Rule | Animated | Static |
-|---|---|---|
-| Stickers per pack | 3 – 30 | 3 – 30 |
-| Sticker format | Animated WebP | Static WebP |
-| Sticker size | 512 × 512 px | 512 × 512 px |
-| Max file size | 500 KB | 100 KB |
-| Tray image | 96 × 96 px PNG | 96 × 96 px PNG |
-| Tray max size | 50 KB | 50 KB |
-
-</details>
-
----
-
 ## [+] License
 
-This project is for personal and educational use.
+This project is licensed under the [MIT License](LICENSE).
 
----
+<br/>
 
 <div align="center">
 
