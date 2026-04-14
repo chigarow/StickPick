@@ -1,0 +1,15 @@
+-keep class com.antonkarpenko.ffmpegkit.** { *; }
+-keep class com.google.gson.** { *; }
+-keep class com.avishkar.stickpick.data.model.** { *; }
+-keep class com.avishkar.stickpick.whatsapp.** { *; }
+-keepattributes Signature
+-keepattributes *Annotation*
+-dontwarn okhttp3.**
+-dontwarn retrofit2.**
+-keep class retrofit2.** { *; }
+-keep class okhttp3.** { *; }
+-dontwarn com.antonkarpenko.**
+-dontwarn javax.annotation.**
+-keep,allowobfuscation,allowshrinking class kotlin.coroutines.Continuation
+-keep,allowobfuscation,allowshrinking interface retrofit2.Call
+-keep,allowobfuscation,allowshrinking class retrofit2.Response
