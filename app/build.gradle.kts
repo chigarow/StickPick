@@ -5,12 +5,13 @@ plugins {
 
 android {
     namespace = "com.avishkar.stickpick"
-    compileSdk = 36
+    compileSdk = 35
+    buildToolsVersion = "34.0.0"
 
     defaultConfig {
         applicationId = "com.avishkar.stickpick"
         minSdk = 26
-        targetSdk = 36
+        targetSdk = 35
         versionCode = 1
         versionName = "1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -41,6 +42,11 @@ android {
     buildFeatures {
         compose = true
     }
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = true
+        }
+    }
 }
 
 dependencies {
@@ -67,6 +73,9 @@ dependencies {
     implementation("com.antonkarpenko:ffmpeg-kit-video:2.1.0")
 
     testImplementation(libs.junit)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation("androidx.test:core-ktx:1.6.1")
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(platform(libs.androidx.compose.bom))

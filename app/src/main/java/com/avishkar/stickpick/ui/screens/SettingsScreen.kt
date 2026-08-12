@@ -167,6 +167,61 @@ fun SettingsScreen(vm: MainViewModel, onBack: () -> Unit, onNavigate: (String) -
                 )
             }
 
+            // Backup & Restore
+            val exportLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+                contract = androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/zip")
+            ) { uri ->
+                if (uri != null) vm.exportBackup(uri)
+            }
+
+            val importLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+                contract = androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
+            ) { uri ->
+                if (uri != null) vm.inspectBackup(uri)
+            }
+
+            val importPreview by vm.importPreviewState.collectAsState()
+            val isBackupProcessing by vm.isBackupProcessing.collectAsState()
+            val backupMessage by vm.backupMessage.collectAsState()
+
+            LaunchedEffect(backupMessage) {
+                if (backupMessage != null) {
+                    // Handled by snackbar or toast
+                }
+            }
+
+            SettingsCard(title = "Backup & Restore", icon = Icons.Outlined.Archive) {
+                Text("Export or import all sticker packs in standard .sbspk backup format.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Button(
+                        onClick = { exportLauncher.launch("stickpick-backup-${System.currentTimeMillis()}.sbspk") },
+                        modifier = Modifier.weight(1f),
+                        enabled = !isBackupProcessing,
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(Icons.Outlined.Upload, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Export")
+                    }
+
+                    OutlinedButton(
+                        onClick = { importLauncher.launch(arrayOf("application/zip", "application/octet-stream", "*/*")) },
+                        modifier = Modifier.weight(1f),
+                        enabled = !isBackupProcessing,
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(Icons.Outlined.Download, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Import")
+                    }
+                }
+            }
+
             // WhatsApp
             SettingsCard(title = "WhatsApp", icon = Icons.Outlined.Forum) {
                 SettingsToggleRow(
@@ -227,6 +282,48 @@ fun SettingsScreen(vm: MainViewModel, onBack: () -> Unit, onNavigate: (String) -
                 }
             },
             dismissButton = { TextButton(onClick = { showClearDialog = false }) { Text("Cancel") } }
+        )
+    }
+
+    val importPreviewState by vm.importPreviewState.collectAsState()
+    val previewState = importPreviewState
+    if (previewState != null) {
+        AlertDialog(
+            onDismissRequest = { vm.dismissImportPreview() },
+            title = { Text("Import Sticker Backup") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Detected ${previewState.importedPacks.size} sticker pack(s) in backup archive:")
+                    previewState.importedPacks.forEach { pack ->
+                        Text("• ${pack.name} (${pack.stickers.size} stickers)", fontWeight = FontWeight.Medium)
+                    }
+                    if (previewState.warnings.isNotEmpty()) {
+                        Spacer(Modifier.height(4.dp))
+                        Text("Warnings / Notes:", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
+                        previewState.warnings.forEach { warn ->
+                            Text("⚠️ $warn", fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Text("Choose Import Mode:", fontWeight = FontWeight.SemiBold)
+                    Text("• Merge: Preserves existing stickers and appends new ones (safest).\n• Overwrite: Replaces matching existing packs completely.", fontSize = 12.sp)
+                }
+            },
+            confirmButton = {
+                Button(onClick = { vm.confirmImport(com.avishkar.stickpick.data.backup.ImportMode.MERGE) }) {
+                    Text("Merge All (Safe)")
+                }
+            },
+            dismissButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = { vm.confirmImport(com.avishkar.stickpick.data.backup.ImportMode.OVERWRITE) }) {
+                        Text("Overwrite", color = MaterialTheme.colorScheme.error)
+                    }
+                    TextButton(onClick = { vm.dismissImportPreview() }) {
+                        Text("Cancel")
+                    }
+                }
+            }
         )
     }
 }

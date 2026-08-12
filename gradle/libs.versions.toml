@@ -16,8 +16,13 @@ coil = "2.7.0"
 gson = "2.11.0"
 material3 = "1.3.1"
 ffmpegkit = "0.9.1"
+robolectric = "4.14.1"
+coroutinesTest = "1.9.0"
 
 [libraries]
+robolectric = { group = "org.robolectric", name = "robolectric", version.ref = "robolectric" }
+kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "coroutinesTest" }
+
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "junitVersion" }

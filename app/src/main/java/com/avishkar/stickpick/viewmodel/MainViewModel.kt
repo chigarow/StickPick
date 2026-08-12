@@ -6,8 +6,10 @@ import androidx.lifecycle.viewModelScope
 import com.avishkar.stickpick.conversion.ConversionEngine
 import com.avishkar.stickpick.data.model.*
 import com.avishkar.stickpick.data.repository.StickerRepository
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
@@ -117,7 +119,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 _downloadProgress.value = _downloadProgress.value.copy(downloadedStickers = completed)
             }
 
-            // Single update — no flickering
             _downloadedFiles.value = results.filterNotNull()
             _downloadProgress.value = _downloadProgress.value.copy(isComplete = true)
             isDownloading = false
@@ -154,7 +155,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
         viewModelScope.launch {
             _conversionProgress.value = ConversionProgress(totalStickers = files.size)
-            val results = mutableListOf<Pair<Int, Boolean>>() // index to isAnimated
+            val results = mutableListOf<Pair<Int, Boolean>>()
             var done = 0
 
             files.forEachIndexed { index, file ->
@@ -200,23 +201,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
         if (allStickers.size < 3) return
 
-        // Validate every sticker file exists and is valid before building packs
         val validStickers = allStickers.filter { sm ->
             val file = File(sm.sticker.convertedFilePath)
             file.exists() && file.length() > 200
         }
 
-        // Separate animated and static stickers into different packs
         val animatedStickers = validStickers.filter { it.isAnimated }
         val staticStickers = validStickers.filter { !it.isAnimated }
 
         var packIndex = 0
-
-        // WhatsApp limits: animated=30 max, static=30 max
         val animLimit = minOf(limit, 30)
         val staticLimit = limit
 
-        // Build animated packs
         if (animatedStickers.size >= 3) {
             val animChunks = animatedStickers.chunked(animLimit)
             animChunks.forEach { chunk ->
@@ -226,7 +222,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
 
-        // Build static packs (animatedStickerPack=false, 100KB limit per sticker)
         if (staticStickers.size >= 3) {
             val staticChunks = staticStickers.chunked(staticLimit)
             staticChunks.forEach { chunk ->
@@ -236,9 +231,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
 
-        // If all stickers are same type and < 3 of the other, just make one pack type
         if (animatedStickers.size < 3 && staticStickers.size < 3 && validStickers.size >= 3) {
-            // Mixed but too few of each — try as static pack (safer)
             val chunks = validStickers.chunked(animLimit)
             chunks.forEachIndexed { idx, chunk ->
                 val suffix = if (chunks.size > 1) "_${idx + 1}" else ""
@@ -261,11 +254,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val packIdentifier = "${packId}${suffix}"
         val trayFileName = "tray_${packIdentifier}.png"
 
-        // Generate tray — always save to base convertedDir
         val firstRawPath = chunk.first().sticker.rawFilePath
         if (firstRawPath.isNotEmpty()) {
             converter.createTrayImage(File(firstRawPath), packId)
-            // Rename generic tray to pack-specific name, keep in same base dir
             val genericTray = File(convertedDir, "tray_${packId}.png")
             val specificTray = File(convertedDir, trayFileName)
             if (genericTray.exists() && genericTray.absolutePath != specificTray.absolutePath) {
@@ -273,7 +264,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
 
-        // Verify tray exists in base dir
         val trayFile = File(convertedDir, trayFileName)
         if (!trayFile.exists()) {
             val genericTray = File(convertedDir, "tray_${packId}.png")
@@ -307,6 +297,207 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun updatePackLimit(limit: Int) { viewModelScope.launch { repo.prefs.savePackLimit(limit) } }
     fun updateThemeMode(mode: String) { viewModelScope.launch { repo.prefs.saveThemeMode(mode) } }
     fun updateWhatsAppBusiness(enabled: Boolean) { viewModelScope.launch { repo.prefs.saveWhatsAppBusiness(enabled) } }
+
+    // Backup & Import Workflows
+    private val archiveManager by lazy { com.avishkar.stickpick.data.backup.StickerArchiveManager(getApplication()) }
+    private val mergeEngine by lazy { com.avishkar.stickpick.data.backup.StickerMergeEngine() }
+
+    private val _importPreviewState = MutableStateFlow<com.avishkar.stickpick.data.backup.ImportPreviewState?>(null)
+    val importPreviewState: StateFlow<com.avishkar.stickpick.data.backup.ImportPreviewState?> = _importPreviewState
+
+    private val _isBackupProcessing = MutableStateFlow(false)
+    val isBackupProcessing: StateFlow<Boolean> = _isBackupProcessing
+
+    private val _backupMessage = MutableStateFlow<String?>(null)
+    val backupMessage: StateFlow<String?> = _backupMessage
+
+    fun exportBackup(uri: android.net.Uri) {
+        viewModelScope.launch(Dispatchers.IO) {
+            _isBackupProcessing.value = true
+            try {
+                val packs = repo.storage.loadPacks()
+                val contentResolver = getApplication<Application>().contentResolver
+                contentResolver.openOutputStream(uri)?.use { os ->
+                    archiveManager.exportArchive(packs, os)
+                }
+                _backupMessage.value = "Backup exported successfully (${packs.size} pack(s))."
+            } catch (e: Exception) {
+                _backupMessage.value = "Export failed: ${e.message}"
+            } finally {
+                _isBackupProcessing.value = false
+            }
+        }
+    }
+
+    fun inspectBackup(uri: android.net.Uri) {
+        viewModelScope.launch(Dispatchers.IO) {
+            _isBackupProcessing.value = true
+            try {
+                // Delete previous staging directory if active
+                _importPreviewState.value?.stagingDir?.deleteRecursively()
+
+                val contentResolver = getApplication<Application>().contentResolver
+                val stagingResult = contentResolver.openInputStream(uri)?.use { isStream ->
+                    archiveManager.extractArchiveToStaging(isStream)
+                }
+
+                if (stagingResult != null) {
+                    val existing = repo.storage.loadPacks()
+                    val preview = mergeEngine.analyzeImport(stagingResult.packs, existing, stagingResult.stagingDir)
+                    _importPreviewState.value = preview
+                } else {
+                    _backupMessage.value = "Failed to open archive stream."
+                }
+            } catch (e: Exception) {
+                _backupMessage.value = "Failed to parse backup: ${e.message}"
+            } finally {
+                _isBackupProcessing.value = false
+            }
+        }
+    }
+
+    fun confirmImport(mode: com.avishkar.stickpick.data.backup.ImportMode) {
+        val preview = _importPreviewState.value ?: return
+        val stagingDir = preview.stagingDir
+
+        viewModelScope.launch(Dispatchers.IO) {
+            _isBackupProcessing.value = true
+            try {
+                val appCtx = getApplication<Application>()
+                val existingPacks = repo.storage.loadPacks().toMutableList()
+
+                val hashProvider: (File) -> String = { f ->
+                    if (f.exists()) {
+                        val digest = java.security.MessageDigest.getInstance("SHA-256")
+                        digest.digest(f.readBytes()).joinToString("") { "%02x".format(it) }
+                    } else "missing_${f.canonicalPath}"
+                }
+
+                var finalPacksToSave = mutableListOf<StickerPack>()
+
+                if (mode == com.avishkar.stickpick.data.backup.ImportMode.OVERWRITE) {
+                    repo.storage.clearAll()
+                    for (imported in preview.importedPacks) {
+                        val rebalanced = mergeEngine.rebalanceCapacity(imported, hashProvider)
+                        finalPacksToSave.addAll(rebalanced)
+                    }
+                } else {
+                    // MERGE Mode
+                    var currentPacks = existingPacks.toList()
+                    for (imported in preview.importedPacks) {
+                        val targetIdx = currentPacks.indexOfFirst { it.identifier == imported.identifier }
+                        if (targetIdx >= 0) {
+                            val mergeRes = mergeEngine.mergePacks(currentPacks[targetIdx], imported, hashProvider)
+                            val mutableCurrent = currentPacks.toMutableList()
+                            mutableCurrent.removeAt(targetIdx)
+                            mutableCurrent.addAll(targetIdx, mergeRes.resultPacks)
+                            currentPacks = mutableCurrent
+                        } else {
+                            val rebalanced = mergeEngine.rebalanceCapacity(imported, hashProvider)
+                            currentPacks = currentPacks + rebalanced
+                        }
+                    }
+                    finalPacksToSave = currentPacks.toMutableList()
+                }
+
+                // Copy physical files from stagingDir into permanent storage
+                if (stagingDir != null && stagingDir.exists()) {
+                    val packsDir = File(stagingDir, "packs")
+                    for (pack in finalPacksToSave) {
+                        // Sanitize identifier
+                        val safeIdentifier = File(pack.identifier).name
+                        val targetPackDir = File(appCtx.filesDir, "stickers/converted/$safeIdentifier").apply { mkdirs() }
+
+                        // Resolve base pack directory if identifier contains underscores
+                        val lastUnderscore = safeIdentifier.lastIndexOf('_')
+                        val basePackId = if (lastUnderscore > 0) safeIdentifier.substring(0, lastUnderscore) else safeIdentifier
+                        val basePackDir = File(appCtx.filesDir, "stickers/converted/$basePackId").apply { mkdirs() }
+
+                        // Resolve original pack directory in staging
+                        val stagedPackFolder = File(packsDir, safeIdentifier).takeIf { it.exists() }
+                            ?: File(packsDir, basePackId).takeIf { it.exists() }
+                            ?: packsDir.listFiles { _, name -> safeIdentifier.startsWith(name) }?.firstOrNull()
+                            ?: File(packsDir, safeIdentifier)
+
+                        val stagedStickersFolder = File(stagedPackFolder, "stickers")
+
+                        // Copy tray image with fallback resolution to BOTH targetPackDir and basePackDir
+                        val rawTrayName = File(pack.trayImageFile.ifEmpty { "tray.png" }).name
+                        val stagedTray = File(stagedPackFolder, rawTrayName)
+                        val targetTray = File(targetPackDir, rawTrayName)
+                        val baseTray = File(basePackDir, rawTrayName)
+
+                        val fallbackTray = stagedPackFolder.listFiles { _, name -> name.startsWith("tray") }?.firstOrNull()
+                        val traySource = if (stagedTray.exists()) stagedTray else fallbackTray
+
+                        if (traySource?.exists() == true) {
+                            if (targetTray.canonicalPath.startsWith(targetPackDir.canonicalPath + File.separator)) {
+                                traySource.copyTo(targetTray, overwrite = true)
+                            }
+                            if (baseTray.canonicalPath.startsWith(basePackDir.canonicalPath + File.separator)) {
+                                traySource.copyTo(baseTray, overwrite = true)
+                            }
+                        }
+
+                        // Copy sticker WebP files with path traversal security checks
+                        val updatedStickers = pack.stickers.map { sticker ->
+                            val safeImageName = File(sticker.imageFileName).name
+                            val stagedStickerFile = File(stagedStickersFolder, safeImageName)
+                            val targetStickerFile = File(targetPackDir, safeImageName)
+
+                            if (targetStickerFile.canonicalPath.startsWith(targetPackDir.canonicalPath + File.separator)) {
+                                if (stagedStickerFile.exists()) {
+                                    stagedStickerFile.copyTo(targetStickerFile, overwrite = true)
+                                }
+                            }
+                            sticker.copy(
+                                imageFileName = safeImageName,
+                                convertedFilePath = targetStickerFile.absolutePath,
+                                rawFilePath = targetStickerFile.absolutePath
+                            )
+                        }
+
+                        val finalIndex = finalPacksToSave.indexOfFirst { it.identifier == pack.identifier }
+                        if (finalIndex != -1) {
+                            finalPacksToSave[finalIndex] = pack.copy(
+                                identifier = safeIdentifier,
+                                trayImageFile = rawTrayName,
+                                stickers = updatedStickers
+                            )
+                        }
+                    }
+                }
+
+                // Filter out invalid packs with fewer than 3 stickers
+                val validPacksToSave = finalPacksToSave.filter { it.stickers.size >= 3 }
+
+                repo.storage.savePacksAtomic(validPacksToSave)
+                withContext(Dispatchers.Main) { loadSavedPacks() }
+                _backupMessage.value = "Backup imported successfully (${preview.importedPacks.size} pack(s))."
+
+            } catch (e: Exception) {
+                _backupMessage.value = "Import failed: ${e.message}"
+            } finally {
+                stagingDir?.deleteRecursively()
+                _importPreviewState.value = null
+                _isBackupProcessing.value = false
+            }
+        }
+    }
+
+    fun dismissImportPreview() {
+        _importPreviewState.value?.stagingDir?.deleteRecursively()
+        _importPreviewState.value = null
+    }
+
+    fun clearBackupMessage() {
+        _backupMessage.value = null
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        _importPreviewState.value?.stagingDir?.deleteRecursively()
+    }
 
     fun resetWorkflow() {
         _stickerSet.value = null
